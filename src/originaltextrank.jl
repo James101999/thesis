@@ -3,6 +3,7 @@ using TextAnalysis
 using TextModels
 using Graphs
 
+# This is just temporary, will move this test data soon
 function data()
     """Statistical expert / data scientist / analytical developer
     BNOSAC (Belgium Network of Open Source Analytical Consultants), is a Belgium consultancy company specialized in data analysis and statistical consultancy using open source tools.
@@ -43,10 +44,13 @@ function data()
     To apply or in order to get more information about the job content, please contact us at: http://bnosac.be/index.php/contact/get-in-touch"""
 end
 
+# Corpus and other CSV will go here soon
+
 function preprocessing(string)
     # Document Preparation
     sd = StringDocument(string)
     # Stemming the text document and removing corrupted characters
+    # Removed Stemming and added stripping articles and stopwords
     remove_corrupt_utf8!(sd)
     remove_case!(sd)
     prepare!(sd, strip_articles | strip_stopwords)
@@ -63,20 +67,25 @@ function preprocessing(string)
     Corpus([StringDocument(join([x for (x, _) in filtered], " "))])
 end
 
-function buildgraph(corpus)
+function cooccurrencematrix(corpus)
     # Build a co-occurrence matrix of words
-    cooccurrence = CooMatrix(corpus, window = 1, normalize = false)
+    CooMatrix(corpus, window = 1, normalize = false)
+end
+
+function buildgraph(cooccurrencematrix)
     # Build a graph from the sparse matrix of co-occurrences
-    cooccurrence, squash(Graph(coom(cooccurrence)))
+    squash(Graph(coom(cooccurrencematrix))) 
 end
 
 function textrank(data)
     corpus = preprocessing(data)
-    coomatrix, graphmatrix = buildgraph(corpus)
+    coomatrix = cooccurrencematrix(corpus)
+    graphmatrix = buildgraph(coomatrix)
     # The scoring algorithm
     # An efficient built in implementation from Graphs.jl
+    # Saw another more efficient implementation that uses BLAS, will look into it soon
     score = pagerank(graphmatrix)
-    if length(coomatrix.terms) < 10
+    if length(coomatrix.terms) < 10 # Will shorten this conditionals some other time
         collect(values(sort(Dict(score .=> coomatrix.terms); rev = true)))
     else
         collect(values(sort(Dict(score .=> coomatrix.terms); rev = true)))[1:10]
