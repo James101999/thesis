@@ -92,9 +92,10 @@ function textrank(data)
     # An efficient built in implementation from Graphs.jl
     # Saw another more efficient implementation that uses BLAS, will look into it soon
     score = pagerank(graphmatrix)::Vector{Float64} # this may cause an error on non-64 bit systems
+    sortedScore = sort(collect(zip(score, coomatrix.terms)); rev = true)
     if length(coomatrix.terms) < 10 # Will shorten this conditionals some other time
-        collect(values(sort(Dict(score .=> coomatrix.terms); rev = true)))
+        map(x -> x[2], sortedScore)
     else
-        collect(values(sort(Dict(score .=> coomatrix.terms); rev = true)))[1:10]
+        map(x -> x[2], sortedScore)[1:10]
     end
 end
