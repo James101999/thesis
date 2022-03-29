@@ -3,6 +3,9 @@ using TextAnalysis
 using TextModels
 using Graphs
 
+# Neural-based PoS Tagger consuming too much memory
+pos = PoSTagger()
+
 # This is just temporary, will move this test data soon
 function data()
     """Statistical expert / data scientist / analytical developer
@@ -55,15 +58,19 @@ function preprocessing(string)
     remove_case!(sd)
     prepare!(sd, strip_articles | strip_stopwords)
     # Tokenize the text
-    tokenizer = tokenize(text(sd))
+    #tok = tokenize(text(sd))
+    tok = split_sentences(text(sd))::Vector{SubString{String}}
     # Tag with parts of speech
-    pos = PoSTagger()
-    tags = pos(text(sd))
+    #pos = PoSTagger()::TextModels.PoSModel
+    #tags = pos(text(sd)::String)::Vector{String}
+    tags = pos.(tok)::Vector{Vector{String}}
     # Filter tagged vocabulary
-    unfiltered = collect(zip(tokenizer, tags))
+    # unfiltered = collect(zip(tokenizer::Vector{String}, tags::Vector{String}))
+    zipped = [collect(zip(tokenize(tok[i])::Vector{String}, tags[i]::Vector{String})) for i in eachindex(tok)]
+    reduced = reduce(vcat, zipped)
     filtered = filter(t -> ((_, y) = t;
         y == "NN" || y == "NNS" || y == "NNP" || y == "NNPS"
-            || y == "VB"), unfiltered)
+            || y == "VB"), reduced)
     Corpus([StringDocument(join([x for (x, _) in filtered], " "))])
 end
 
@@ -74,7 +81,7 @@ end
 
 function buildgraph(cooccurrencematrix)
     # Build a graph from the sparse matrix of co-occurrences
-    squash(Graph(coom(cooccurrencematrix))) 
+    Graph(coom(cooccurrencematrix)::AbstractMatrix)
 end
 
 function textrank(data)
@@ -84,7 +91,7 @@ function textrank(data)
     # The scoring algorithm
     # An efficient built in implementation from Graphs.jl
     # Saw another more efficient implementation that uses BLAS, will look into it soon
-    score = pagerank(graphmatrix)
+    score = pagerank(graphmatrix)::Vector{Float64} # this may cause an error on non-64 bit systems
     if length(coomatrix.terms) < 10 # Will shorten this conditionals some other time
         collect(values(sort(Dict(score .=> coomatrix.terms); rev = true)))
     else
