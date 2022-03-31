@@ -1,7 +1,9 @@
 using WordTokenizers
 using TextAnalysis
 using TextModels
+using Languages
 using Graphs
+using PyCall
 
 # Neural-based PoS Tagger consuming too much memory
 pos = PoSTagger()
@@ -49,34 +51,54 @@ end
 
 # Corpus and other CSV will go here soon
 
-function preprocessing(string)
-    # Document Preparation
-    sd = StringDocument(string)
-    # Stemming the text document and removing corrupted characters
-    # Removed Stemming and added stripping articles and stopwords
-    remove_corrupt_utf8!(sd)
-    remove_case!(sd)
-    prepare!(sd, strip_articles | strip_stopwords)
+function lemmatization(data)
+    pyimport("spacy")
+    whose(spacy)
+    #nlp = spacy.load("en_core_web_sm")
+    #lemmatizer = nlp.get_pipe("lemmatizer")
+    #doc = nlp(data)
+    #[token.lemma_ for token in doc].join(' ')
+end
+
+function postagging(data)
     # Tokenize the text
     #tok = tokenize(text(sd))
-    tok = split_sentences(text(sd))::Vector{SubString{String}}
+    tok = split_sentences(data)
     # Tag with parts of speech
     #pos = PoSTagger()::TextModels.PoSModel
     #tags = pos(text(sd)::String)::Vector{String}
     tags = pos.(tok)::Vector{Vector{String}}
-    # Filter tagged vocabulary
     # unfiltered = collect(zip(tokenizer::Vector{String}, tags::Vector{String}))
-    zipped = [collect(zip(tokenize(tok[i])::Vector{String}, tags[i]::Vector{String})) for i in eachindex(tok)]
-    reduced = reduce(vcat, zipped)
+    zipped = [collect(zip(nltk_word_tokenize(tok[i])::Vector{String}, tags[i]::Vector{String})) for i in eachindex(tok)]
+    reduce(vcat, zipped)
+end
+
+function documentpreparation(data)
+    sd = StringDocument(data)
+    # Let us first remove the unreadable characters
+    remove_corrupt_utf8!(sd)
+    # lower case every word
+    remove_case!(sd)
+    # Too aggressive, replace with lemmatization
+    # stem!(sd)
+    sd
+end
+
+function preprocessing(document)
+    sd = documentpreparation(document)
+     # stripping articles and stopwords
+    prepare!(sd, strip_articles | strip_stopwords)
+    tags = postagging(text(sd))
+    # Filter tagged vocabulary
     filtered = filter(t -> ((_, y) = t;
         y == "NN" || y == "NNS" || y == "NNP" || y == "NNPS"
-            || y == "VB"), reduced)
-    Corpus([StringDocument(join([x for (x, _) in filtered], " "))])
+            || y == "JJ" || y == "JJR" || y == "JJS"), tags)
+    Corpus([TokenDocument([x for (x, _) in filtered])])
 end
 
 function cooccurrencematrix(corpus)
     # Build a co-occurrence matrix of words
-    CooMatrix(corpus, window = 1, normalize = false)
+    CooMatrix(corpus, window = 3, normalize = false)
 end
 
 function buildgraph(cooccurrencematrix)
@@ -84,18 +106,62 @@ function buildgraph(cooccurrencematrix)
     Graph(coom(cooccurrencematrix)::AbstractMatrix)
 end
 
-function textrank(data)
+function score(data)
     corpus = preprocessing(data)
     coomatrix = cooccurrencematrix(corpus)
     graphmatrix = buildgraph(coomatrix)
     # The scoring algorithm
     # An efficient built in implementation from Graphs.jl
     # Saw another more efficient implementation that uses BLAS, will look into it soon
-    score = pagerank(graphmatrix)::Vector{Float64} # this may cause an error on non-64 bit systems
-    sortedScore = sort(collect(zip(score, coomatrix.terms)); rev = true)
-    if length(coomatrix.terms) < 10 # Will shorten this conditionals some other time
-        map(x -> x[2], sortedScore)
-    else
-        map(x -> x[2], sortedScore)[1:10]
+    score = pagerank(graphmatrix, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
+    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:floor(Int, 1/3 * length(coomatrix.terms))]
+    # map(x -> x[2], sortedScore)[1:floor(Int, 1/3 * length(coomatrix.terms))]
+end
+
+function postprocessing(data)
+    scores = score(data)
+    document = documentpreparation(data)
+    prepare!(document, strip_punctuation)
+    lex = nltk_word_tokenize(text(document))
+    toprankwords = [x[2] for x in scores]
+    toprankscores = [x[1] for x in scores]
+    newwords = []
+    multiword = ""
+
+    for i in eachindex(lex)
+        if lex[i] ∈ toprankwords
+            multiword *= lex[i] * " "
+        else
+            if occursin(multiword, text(document)) && !isempty(multiword)
+                push!(newwords, rstrip(multiword))
+            end
+            multiword = ""
+        end
     end
+
+    phrases = collect(Set(newwords))
+    final = []
+    for i in eachindex(phrases)
+        splittedphrase = split(phrases[i]::String)
+        tempscore::Integer = 0
+        if length(splittedphrase) < 2
+            push!(final, (toprankscores[findall(x->x==phrases[i], 
+            toprankwords)[1]::Integer], phrases[i]::String))
+        else
+            for j in eachindex(splittedphrase)
+                tempscore += toprankscores[findall(x->x==splittedphrase[j], 
+                toprankwords)[1]::Integer]
+            end
+            push!(final, (tempscore, phrases[i]::String))
+            tempscore = 0
+        end
+    end
+    map(x -> x[2], sort(final; rev=true))::Vector{String}
+
+
+    #joinwhitespace(x) = join(x, " ")
+    #phrases = map(joinwhitespace, collect(Iterators.product(cooccurrencematrix.terms)))
+    #occuringphrase(x) = occursin(x, text(processeddocument))
+    #filtered = filter(occuringphrase, phrases)
+
 end
