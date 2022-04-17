@@ -35,6 +35,18 @@ git-tree-sha1 = "f87e559f87a45bece9c9ed97458d3afe98b1ebb9"
 uuid = "ec485272-7323-5ecc-a04f-4719b315124d"
 version = "0.1.0"
 
+[[deps.Arpack]]
+deps = ["Arpack_jll", "Libdl", "LinearAlgebra"]
+git-tree-sha1 = "2ff92b71ba1747c5fdd541f8fc87736d82f40ec9"
+uuid = "7d9fca2a-8960-54d3-9f78-7d1dccf2cb97"
+version = "0.4.0"
+
+[[deps.Arpack_jll]]
+deps = ["Artifacts", "CompilerSupportLibraries_jll", "JLLWrappers", "Libdl", "OpenBLAS_jll", "Pkg"]
+git-tree-sha1 = "5ba6c757e8feccf03a1554dfaf3e26b3cfc7fd5e"
+uuid = "68821587-b530-5797-8361-c406ea357684"
+version = "3.5.1+1"
+
 [[deps.ArrayInterface]]
 deps = ["Compat", "IfElse", "LinearAlgebra", "Requires", "SparseArrays", "Static"]
 git-tree-sha1 = "1ee88c4c76caa995a885dc2f22a5d548dfbbc0ba"
@@ -613,6 +625,12 @@ git-tree-sha1 = "07cb43290a840908a771552911a6274bc6c072c7"
 uuid = "e5e0dc1b-0480-54bc-9374-aad01c23163d"
 version = "0.8.4"
 
+[[deps.KahanSummation]]
+deps = ["Test"]
+git-tree-sha1 = "1f01068b28d3ad83d4d1212a0ce8d7ecacb33482"
+uuid = "8e2b3108-d4c1-50be-a7a2-16352aec75c3"
+version = "0.1.0"
+
 [[deps.LERC_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl", "Pkg"]
 git-tree-sha1 = "bf36f528eec6634efc60d7ec062008f171071434"
@@ -767,6 +785,12 @@ version = "0.5.9"
 deps = ["Base64"]
 uuid = "d6f4376e-aef5-505a-96c1-9c027394607a"
 
+[[deps.MatrixNetworks]]
+deps = ["Arpack", "DataStructures", "DelimitedFiles", "IterTools", "KahanSummation", "LinearAlgebra", "Printf", "Random", "SparseArrays", "Statistics"]
+git-tree-sha1 = "f6794d987d426bab570aabb2d03e2f40ca4fc438"
+uuid = "4f449596-a032-5618-b826-5a251cb6dc11"
+version = "1.0.2"
+
 [[deps.MbedTLS]]
 deps = ["Dates", "MbedTLS_jll", "Random", "Sockets"]
 git-tree-sha1 = "1c38e51c3d08ef2278062ebceade0e46cefc96fe"
@@ -793,6 +817,12 @@ deps = ["AbstractTrees"]
 git-tree-sha1 = "81e123ea81d6081fe8b733dbe79e1291d55cfb0f"
 uuid = "85b6ec6f-f7df-4429-9514-a64bcd9ee824"
 version = "0.4.6"
+
+[[deps.Metrics]]
+deps = ["DataFrames", "DataStructures", "Random", "StatsBase"]
+git-tree-sha1 = "77e60aad4d63a3b0131f5e33a5f18d1bd63262ef"
+uuid = "cb9f3049-315b-4f05-b90c-a8adaec4da78"
+version = "0.1.1"
 
 [[deps.MicroMamba]]
 deps = ["Pkg", "Scratch"]
