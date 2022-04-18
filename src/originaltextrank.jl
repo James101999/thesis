@@ -5,7 +5,7 @@ using Graphs
 using PyCall
 using CSV
 using DataFrames
-using Metrics
+using ThreadsX
 
 @pyimport nltk
 @pyimport datasets
@@ -55,7 +55,6 @@ function documentpreparation(data::String)
     # stem!(sd)
     sd
 end
-
     
 function preprocessing(document::String)
     sd = documentpreparation(document)
@@ -105,7 +104,7 @@ function score(data)
     # An efficient built in implementation from Graphs.jl
     # Saw another more efficient implementation that uses BLAS, will look into it soon
     score = pagerank(graphmatrix, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
-    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/3 * length(coomatrix.terms))]
+    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/30 * length(coomatrix.terms))]
     # map(x -> x[2], sortedScore)[1:floor(Int, 1/3 * length(coomatrix.terms))]
 end
 
@@ -155,7 +154,6 @@ function postprocessing(data::String)
     #phrases = map(joinwhitespace, collect(Iterators.product(cooccurrencematrix.terms)))
     #occuringphrase(x) = occursin(x, text(processeddocument))
     #filtered = filter(occuringphrase, phrases)
-
 end
 
 function postprocessing(data::Vector)
@@ -166,10 +164,10 @@ function postprocessing(data::Vector)
     multiword = ""
 
     for i in eachindex(data)
-        if lex[i] ∈ toprankwords
-            multiword *= lex[i] * " "
+        if data[i] ∈ toprankwords
+            multiword *= data[i] * " "
         else
-            if occursin(multiword, text(document)) && !isempty(multiword)
+            if occursin(multiword, join(data, ' ')) && !isempty(multiword)
                 push!(newwords, rstrip(multiword))
             end
             multiword = ""
@@ -199,7 +197,12 @@ end
 function simulation()
     dataset = datasets.load_dataset("midas/semeval2010", "raw")
     test_data = dataset["test"]
-    alldocuments = test_data["document"]
-    goldenkeys = test_data["extractive_keyphrases"]
-
+    alldocuments = []
+    goldenkeys = []
+    for i in 0:(convert(Integer, test_data["num_rows"]) - 1)
+        push!(alldocuments, test_data[i]["document"])
+        push!(goldenkeys, test_data[i]["extractive_keyphrases"])
+    end
+    extracted_keywords = map(postprocessing, alldocuments)
+    (extracted_keywords, goldenkeys)
 end
