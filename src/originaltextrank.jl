@@ -106,7 +106,8 @@ function score(data)
     # An efficient built in implementation from Graphs.jl
     # Saw another more efficient implementation that uses BLAS, will look into it soon
     score = pagerank(graphmatrix, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
-    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/60 * length(coomatrix.terms))]
+    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1 * length(coomatrix.terms))]
+    #sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/60 * length(coomatrix.terms))]
     # map(x -> x[2], sortedScore)[1:floor(Int, 1/3 * length(coomatrix.terms))]
 end
 
@@ -163,16 +164,19 @@ function postprocessing(data::String)
 end
 
 function postprocessing(data::Vector)
+    lex = TokenDocument(data)
+    remove_case!(lex)
+    lex_data = lex.tokens
     scores = score(data)
     toprankwords = [x[2] for x in scores]
     toprankscores = [x[1] for x in scores]
     newwords = Vector{SubString{String}}(undef, 1)
     multiword = ""
-    for i in eachindex(data)
-        if data[i] ∈ toprankwords
-            multiword *= data[i] * " "
+    for i in eachindex(lex_data)
+        if lex_data[i] ∈ toprankwords
+            multiword *= lex_data[i] * " "
         else
-            if occursin(multiword, join(data, ' ')) && !isempty(multiword)
+            if occursin(multiword, join(lex_data, ' ')) && !isempty(multiword)
                 if !isassigned(newwords)
                     newwords[1] = rstrip(multiword)
                 else
@@ -214,6 +218,7 @@ function simulation_baseline_algo()
     
     extracted_keywords = map(postprocessing, alldocuments)
     (predicted=extracted_keywords, ground_truth=goldenkeys)
+    #CSV.write("data/semeval2010_task5_data.csv", DataFrame(predicted=extracted_keywords, ground_truth=goldenkeys))
 end
 
 function simulation_wcoref()
@@ -225,6 +230,34 @@ function simulation_wcoref()
     (predicted=extracted_keywords, ground_truth=goldenkeys)
 end
 
+function process_corefsemeval()
+    data = CSV.read("data/semeval2010coref.csv", DataFrame)
+    transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    transform!(data, "predicted" => ByRow(split) => "predicted")
+    transform!(data, "predicted" => ByRow(postprocessing) => "predicted")
+    CSV.write("data/semeval2010coref_data.csv", data)    
+end
+
+function process_marujo()
+    data = CSV.read("data/marujo_processed.csv", DataFrame)
+    transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
+    transform!(data, "predicted" => ByRow(split) => "predicted")
+    transform!(data, "predicted" => ByRow(postprocessing) => "predicted")
+    CSV.write("data/marujo_processed_data.csv", data)
+end
+
+function process_corefmarujo()
+    data = CSV.read("data/marujocoref.csv", DataFrame)
+    transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
+    transform!(data, "predicted" => ByRow(split) => "predicted")
+    transform!(data, "predicted" => ByRow(postprocessing) => "predicted")
+    CSV.write("data/marujocoref_data.csv", data)
+end
+
+function relevant_at_k(pred, gr, k)
+    length(pred[k] ∩ gr)
+end
+
 function precision_at_k(pred, gr, k)
     length(pred[1:k] ∩ gr)/k
 end
@@ -233,33 +266,82 @@ function recall_at_k(pred, gr, k)
     length(pred[1:k] ∩ gr)/length(gr)
 end
 
-function sum_precision(document, k=0)
-    y_pred = document[1]
-    y_true = document[2]
+function sum_precision(pred, gr, k=0)
     if k==0
-        sum([length(y_pred[i] ∩ y_true[i]) for i=1:length(y_pred)])/sum(map(length, y_pred))
+        sum([length(pred[i] ∩ gr[i]) for i=1:length(pred)])/sum(map(length, pred))
     else
-        valid_k = filter(x -> length(x) >= k, y_pred)
-        mean(precision_at_k(valid_k[i], y_true[i], k) for i=1:length(valid_k))
+        valid_k = filter(x -> length(x) >= k, pred)
+        mean(precision_at_k(valid_k[i], gr[i], k) for i=1:length(valid_k))
     end
 end
 
-function sum_recall(document, k=0)
-    y_pred = document[1]
-    y_true = document[2]
+function sum_recall(pred, gr, k=0)
     if k==0
-        sum([length(y_pred[i] ∩ y_true[i]) for i=1:length(y_pred)])/sum(map(length, y_gr))
+        sum([length(pred[i] ∩ gr[i]) for i=1:length(pred)])/sum(map(length, gr))
     else
-        valid_k = filter(x -> length(x) >= k, y_pred)
-        mean(recall_at_k(valid_k[i], y_true[i], k) for i=1:length(valid_k))
+        valid_k = filter(x -> length(x) >= k, pred)
+        mean(recall_at_k(valid_k[i], gr[i], k) for i=1:length(valid_k))
     end
 end
 
-function f1_measure(document, k=0)
-    precision = sum_precision(document, k)
-    recall = sum_recall(document, k)
-    2 * (precision * recall)/(precision + recall)
+function f1_measure(pred, gr, k=0)
+    precision = sum_precision(pred, gr, k)
+    recall = sum_recall(pred, gr, k)
+    2.00 * (precision * recall)/(precision + recall)
 end
 
+function average_precision(y_pred, y_gr, k=0)
+end
 
-#@benchmark simulation()
+function baseline_metrics_semeval2010()
+    data = CSV.read("data/semeval2010_task5_data.csv", DataFrame)
+    transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    #transform!(a, "ground_truth" => ByRow(Meta.parse) => "ground_truth")
+    #transform!(a, "ground_truth" => ByRow(eval) => "ground_truth")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    precision = sum_precision(data.predicted, data.ground_truth)
+    recall = sum_recall(data.predicted, data.ground_truth)
+    f1_m = f1_measure(data.predicted, data.ground_truth)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+end
+
+function coref_metrics_semeval2010()
+    data = CSV.read("data/semeval2010coref_data.csv", DataFrame)
+    
+    #transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    #transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    #transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    precision = sum_precision(data.predicted, data.ground_truth)
+    recall = sum_recall(data.predicted, data.ground_truth)
+    f1_m = f1_measure(data.predicted, data.ground_truth)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+end
+
+function baseline_metrics_marujo()
+    data = CSV.read("data/marujo_processed_data.csv", DataFrame)
+
+    precision = sum_precision(data.predicted, data.ground_truth)
+    recall = sum_recall(data.predicted, data.ground_truth)
+    f1_m = f1_measure(data.predicted, data.ground_truth)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+end
+
+function coref_metrics_marujo()
+    data = CSV.read("data/marujocoref_data.csv", DataFrame)
+
+    precision = sum_precision(data.predicted, data.ground_truth)
+    recall = sum_recall(data.predicted, data.ground_truth)
+    f1_m = f1_measure(data.predicted, data.ground_truth)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+end
