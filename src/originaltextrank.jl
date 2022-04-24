@@ -31,7 +31,7 @@ function coreference(data::Vector)
     # src code: from huggingface's neuralcoref
     nlp = pycall(spacy.load, PyObject, PyObject("en"))
     pycall(neuralcoref.add_to_pipe, PyObject, nlp)
-    [x._.coref_resolved for x in nlp.pipe(data, batch_size=3000)]
+    [x._.coref_resolved for x in nlp.pipe(data, batch_size=20)]
 end
  
 #function postagging(data)
@@ -106,7 +106,7 @@ function score(data)
     # An efficient built in implementation from Graphs.jl
     # Saw another more efficient implementation that uses BLAS, will look into it soon
     score = pagerank(graphmatrix, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
-    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1 * length(coomatrix.terms))]
+    sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/3 * length(coomatrix.terms))]
     #sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/60 * length(coomatrix.terms))]
     # map(x -> x[2], sortedScore)[1:floor(Int, 1/3 * length(coomatrix.terms))]
 end
@@ -240,7 +240,9 @@ end
 
 function process_marujo()
     data = CSV.read("data/marujo_processed.csv", DataFrame)
-    transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
+    #transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
+    transform!(data, "predicted" => ByRow(x -> replace(x, "-LRB-" => "(")) => "predicted")
+    transform!(data, "predicted" => ByRow(x -> replace(x, "-RRB-" => ")")) => "predicted")
     transform!(data, "predicted" => ByRow(split) => "predicted")
     transform!(data, "predicted" => ByRow(postprocessing) => "predicted")
     CSV.write("data/marujo_processed_data.csv", data)
@@ -248,18 +250,52 @@ end
 
 function process_corefmarujo()
     data = CSV.read("data/marujocoref.csv", DataFrame)
-    transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
+    correct_ground_truth = CSV.read("data/marujo_processed.csv", DataFrame)
+    transform!(data, "predicted" => ByRow(x -> replace(x, "-LRB-" => "(")) => "predicted")
+    transform!(data, "predicted" => ByRow(x -> replace(x, "-RRB-" => ")")) => "predicted")
+    select!(data, Not(:ground_truth))
+    data[!, :ground_truth] = correct_ground_truth.ground_truth
+    data[!, :ground_truth_stemmed] = correct_ground_truth.ground_truth_stemmed
+    #transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
     transform!(data, "predicted" => ByRow(split) => "predicted")
     transform!(data, "predicted" => ByRow(postprocessing) => "predicted")
     CSV.write("data/marujocoref_data.csv", data)
 end
 
+function process_corefmarujo_allennlp()
+    data = CSV.read("data/marujocoref_allennlp.csv", DataFrame)
+    transform!(data, "predicted" => ByRow(x -> replace(x, "-LRB-" => "(")) => "predicted")
+    transform!(data, "predicted" => ByRow(x -> replace(x, "-RRB-" => ")")) => "predicted")
+    correct_ground_truth = CSV.read("data/marujo_processed.csv", DataFrame)
+    select!(data, Not(:ground_truth))
+    data[!, :ground_truth] = correct_ground_truth.ground_truth
+    data[!, :ground_truth_stemmed] = correct_ground_truth.ground_truth_stemmed
+    #transform!(data, "ground_truth" => ByRow(split) => "ground_truth")
+    transform!(data, "predicted" => ByRow(split) => "predicted")
+    transform!(data, "predicted" => ByRow(postprocessing) => "predicted")
+    CSV.write("data/marujocoref_allennlp_data.csv", data)
+end
+
 function relevant_at_k(pred, gr, k)
-    length(pred[k] ∩ gr)
+    pred[k] ∈ gr
 end
 
 function precision_at_k(pred, gr, k)
     length(pred[1:k] ∩ gr)/k
+end
+
+function average_precision(pred, gr)
+    sz = 0
+    if length(gr) >= length(pred)
+        sz = length(pred)
+    else
+        sz = length(gr)
+    end
+    sum([precision_at_k(pred, gr, i) * relevant_at_k(pred, gr, i) for i=1:sz])/length(gr)
+end
+
+function mean_ap(pred, gr)
+    mean([average_precision(pred[i], gr[i]) for i=1:length(pred)])
 end
 
 function recall_at_k(pred, gr, k)
@@ -290,8 +326,9 @@ function f1_measure(pred, gr, k=0)
     2.00 * (precision * recall)/(precision + recall)
 end
 
-function average_precision(y_pred, y_gr, k=0)
-end
+
+# ======================= Performance Metrics ==============================================
+# Generalize these functions later
 
 function baseline_metrics_semeval2010()
     data = CSV.read("data/semeval2010_task5_data.csv", DataFrame)
@@ -302,46 +339,173 @@ function baseline_metrics_semeval2010()
     transform!(data, "predicted" => ByRow(eval) => "predicted")
 
     precision = sum_precision(data.predicted, data.ground_truth)
+    p_at_k(k) = sum_precision(data.predicted, data.ground_truth, k)
     recall = sum_recall(data.predicted, data.ground_truth)
+    r_at_k(k) = sum_recall(data.predicted, data.ground_truth, k)
     f1_m = f1_measure(data.predicted, data.ground_truth)
+    f1_m_at_k(k) = f1_measure(data.predicted, data.ground_truth, k)
+    m_ap = mean_ap(data.predicted, data.ground_truth)
     println("Precision: $precision")
     println("Recall: $recall")
     println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+    for i in 1:15
+        println("""Precision@$i: $(p_at_k(i))
+                   Recall@$i: $(p_at_k(i))
+                   F1@$i: $(f1_m_at_k(i))
+                """)
+    end
 end
 
 function coref_metrics_semeval2010()
     data = CSV.read("data/semeval2010coref_data.csv", DataFrame)
-    
-    #transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
-    #transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
-    #transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
 
     precision = sum_precision(data.predicted, data.ground_truth)
+    p_at_k(k) = sum_precision(data.predicted, data.ground_truth, k)
     recall = sum_recall(data.predicted, data.ground_truth)
+    r_at_k(k) = sum_recall(data.predicted, data.ground_truth, k)
     f1_m = f1_measure(data.predicted, data.ground_truth)
+    f1_m_at_k(k) = f1_measure(data.predicted, data.ground_truth, k)
+    m_ap = mean_ap(data.predicted, data.ground_truth)
     println("Precision: $precision")
     println("Recall: $recall")
     println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+    for i in 1:15
+        println("""Precision@$i: $(p_at_k(i))
+                   Recall@$i: $(p_at_k(i))
+                   F1@$i: $(f1_m_at_k(i))
+                """)
+    end
 end
 
 function baseline_metrics_marujo()
     data = CSV.read("data/marujo_processed_data.csv", DataFrame)
 
+    transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
+
     precision = sum_precision(data.predicted, data.ground_truth)
+    p_at_k(k) = sum_precision(data.predicted, data.ground_truth, k)
     recall = sum_recall(data.predicted, data.ground_truth)
+    r_at_k(k) = sum_recall(data.predicted, data.ground_truth, k)
     f1_m = f1_measure(data.predicted, data.ground_truth)
+    f1_m_at_k(k) = f1_measure(data.predicted, data.ground_truth, k)
+    m_ap = mean_ap(data.predicted, data.ground_truth)
     println("Precision: $precision")
     println("Recall: $recall")
     println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+    for i in 1:15
+        println("""Precision@$i: $(p_at_k(i))
+                   Recall@$i: $(p_at_k(i))
+                   F1@$i: $(f1_m_at_k(i))
+                """)
+    end
 end
 
 function coref_metrics_marujo()
     data = CSV.read("data/marujocoref_data.csv", DataFrame)
+    transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
 
     precision = sum_precision(data.predicted, data.ground_truth)
+    p_at_k(k) = sum_precision(data.predicted, data.ground_truth, k)
     recall = sum_recall(data.predicted, data.ground_truth)
+    r_at_k(k) = sum_recall(data.predicted, data.ground_truth, k)
     f1_m = f1_measure(data.predicted, data.ground_truth)
+    f1_m_at_k(k) = f1_measure(data.predicted, data.ground_truth, k)
+    m_ap = mean_ap(data.predicted, data.ground_truth)
     println("Precision: $precision")
     println("Recall: $recall")
     println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+    for i in 1:15
+        println("""Precision@$i: $(p_at_k(i))
+                   Recall@$i: $(p_at_k(i))
+                   F1@$i: $(f1_m_at_k(i))
+                """)
+    end
 end
+
+function allennlp_coref_metrics_marujo()
+    data = CSV.read("data/marujocoref_allennlp_data.csv", DataFrame)
+    transform!(data, "ground_truth" => ByRow(pyeval) => "ground_truth")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    precision = sum_precision(data.predicted, data.ground_truth)
+    p_at_k(k) = sum_precision(data.predicted, data.ground_truth, k)
+    recall = sum_recall(data.predicted, data.ground_truth)
+    r_at_k(k) = sum_recall(data.predicted, data.ground_truth, k)
+    f1_m = f1_measure(data.predicted, data.ground_truth)
+    f1_m_at_k(k) = f1_measure(data.predicted, data.ground_truth, k)
+    m_ap = mean_ap(data.predicted, data.ground_truth)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+    for i in 1:15
+        println("""Precision@$i: $(p_at_k(i))
+                   Recall@$i: $(p_at_k(i))
+                   F1@$i: $(f1_m_at_k(i))
+                """)
+    end
+end
+
+function baseline_metrics_marujostemmed()
+    data = CSV.read("data/marujo_processed_data.csv", DataFrame)
+
+    transform!(data, "ground_truth_stemmed" => ByRow(pyeval) => "ground_truth_stemmed")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    precision = sum_precision(data.predicted, data.ground_truth_stemmed)
+    recall = sum_recall(data.predicted, data.ground_truth_stemmed)
+    f1_m = f1_measure(data.predicted, data.ground_truth_stemmed)
+    m_ap = mean_ap(data.predicted, data.ground_truth_stemmed)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+end
+
+function coref_metrics_marujostemmed()
+    data = CSV.read("data/marujocoref_data.csv", DataFrame)
+    transform!(data, "ground_truth_stemmed" => ByRow(pyeval) => "ground_truth_stemmed")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    precision = sum_precision(data.predicted, data.ground_truth_stemmed)
+    recall = sum_recall(data.predicted, data.ground_truth_stemmed)
+    f1_m = f1_measure(data.predicted, data.ground_truth_stemmed)
+    m_ap = mean_ap(data.predicted, data.ground_truth_stemmed)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+end
+
+function allennlp_coref_metrics_marujostemmed()
+    data = CSV.read("data/marujocoref_allennlp_data.csv", DataFrame)
+    transform!(data, "ground_truth_stemmed" => ByRow(pyeval) => "ground_truth_stemmed")
+    transform!(data, "predicted" => ByRow(Meta.parse) => "predicted")
+    transform!(data, "predicted" => ByRow(eval) => "predicted")
+
+    precision = sum_precision(data.predicted, data.ground_truth_stemmed)
+    recall = sum_recall(data.predicted, data.ground_truth_stemmed)
+    f1_m = f1_measure(data.predicted, data.ground_truth_stemmed)
+    m_ap = mean_ap(data.predicted, data.ground_truth_stemmed)
+    println("Precision: $precision")
+    println("Recall: $recall")
+    println("F1 Measure: $f1_m")
+    println("Mean Average Precision: $m_ap")
+end
+
+# ===========================================================================================
