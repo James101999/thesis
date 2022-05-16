@@ -3,6 +3,7 @@ using TextAnalysis
 using TextModels
 using Graphs
 using MetaGraphs
+using SimpleWeightedGraphs
 using PyCall
 using CSV
 using DataFrames
@@ -130,32 +131,37 @@ end
 
 function weighted_score(data)
     corpus = preprocessing(data)
-    #disambiguated_corpus = disambiguation(join(corpus[1].tokens, " "))
-    #original_candidates = [x[1] for x in disambiguated_corpus]
-    #lemmatized_candidates = [x[2] for x in disambiguated_corpus]
-    #synset_candidates = [x[3] for x in disambiguated_corpus]
-    #coomatrix = cooccurrencematrix(Corpus[TokenDocument(lemmatized_candidates)])
     coomatrix = cooccurrencematrix(corpus)
     doc_coomatrixterms = StringDocument(join(coomatrix.terms, " "))
     prepare!(doc_coomatrixterms, strip_punctuation)
     cleaned_coomatrixterms = split(text(doc_coomatrixterms))
-    graphmatrix = build_weighted_graph(coomatrix)
-    disambiguated_candidates = disambiguation(join(cleaned_coomatrixterms, " "))
-    #lemmatized_candidates = [x[2] for x in disambiguated_candidates]
-    synset_candidates = [x[3] for x in disambiguated_candidates]
+
+    #graphmatrix = build_weighted_graph(coomatrix)
+    graphmatrix = SimpleDiGraph(coom(coomatrix))
     graphmatrix_edges = collect(edges(graphmatrix))
     graphmatrix_src = map(src, graphmatrix_edges)
     graphmatrix_dst = map(dst, graphmatrix_edges)
+
+    weighted_digraph = SimpleWeightedDiGraph(graphmatrix_src, graphmatrix_dst, fill(1.0e-6, ne(graphmatrix)))
+
+    disambiguated_candidates = disambiguation(join(cleaned_coomatrixterms, " "))
+    synset_candidates = [x[3] for x in disambiguated_candidates]
+    
 
     for i in eachindex(graphmatrix_edges)
         if isnothing(synset_candidates[graphmatrix_src[i]]) || isnothing(synset_candidates[graphmatrix_dst[i]])
             continue
         else
-            set_prop!(graphmatrix, graphmatrix_src[i], graphmatrix_dst[i], :weight, pywsd.similarity.similarity_by_path(synset_candidates[graphmatrix_src[i]], synset_candidates[graphmatrix_dst[i]], option="path"))
+            semantic_similarity = pywsd.similarity.similarity_by_path(synset_candidates[graphmatrix_src[i]], synset_candidates[graphmatrix_dst[i]], option="wup")
+            if semantic_similarity > 0
+                add_edge!(weighted_digraph, graphmatrix_src[i], graphmatrix_dst[i], semantic_similarity)
+            else
+                continue
+            end
         end
     end
-    score = pagerank(graphmatrix, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
-    sort(collect(zip(score, cleaned_coomatrixterms)); rev = true)[1:ceil(Integer, 1/3 * length(cleaned_coomatrixterms))]
+    score = pagerank(weighted_digraph::SimpleWeightedDiGraph, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
+    sort(collect(zip(score, cleaned_coomatrixterms)); rev = true)[1:ceil(Integer, length(cleaned_coomatrixterms))]
 end
 
 function postprocessing(data::String)
