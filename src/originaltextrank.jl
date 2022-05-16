@@ -2,6 +2,7 @@ using WordTokenizers
 using TextAnalysis
 using TextModels
 using Graphs
+using MetaGraphs
 using PyCall
 using CSV
 using DataFrames
@@ -12,6 +13,8 @@ import Pandas
 @pyimport spacy
 @pyimport neuralcoref
 @pyimport datasets
+@pyimport wn
+@pyimport pywsd
 
 # Neural-based PoS Tagger consuming too much memory
 # Replaced with nltk pos tagger
@@ -98,6 +101,12 @@ function buildgraph(cooccurrencematrix)
     Graph(coom(cooccurrencematrix)::AbstractMatrix)
 end
 
+function build_weighted_graph(cooccurrencematrix)
+    # Build a graph from the sparse matrix of co-occurrences
+    g = Graph(coom(cooccurrencematrix)::AbstractMatrix)
+    MetaGraph(g)
+end
+
 function score(data)
     corpus = preprocessing(data)
     coomatrix = cooccurrencematrix(corpus)
@@ -109,6 +118,44 @@ function score(data)
     sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/3 * length(coomatrix.terms))]
     #sort(collect(zip(score, coomatrix.terms)); rev = true)[1:ceil(Integer, 1/60 * length(coomatrix.terms))]
     # map(x -> x[2], sortedScore)[1:floor(Int, 1/3 * length(coomatrix.terms))]
+end
+
+function disambiguation(data)
+    simple_lesk = pywsd.lesk.simple_lesk
+    adapted_lesk = pywsd.lesk.adapted_lesk
+    disambiguate = pywsd.disambiguate
+
+    disambiguate(data, algorithm=adapted_lesk, similarity_option="wup", keepLemmas=true)
+end
+
+function weighted_score(data)
+    corpus = preprocessing(data)
+    #disambiguated_corpus = disambiguation(join(corpus[1].tokens, " "))
+    #original_candidates = [x[1] for x in disambiguated_corpus]
+    #lemmatized_candidates = [x[2] for x in disambiguated_corpus]
+    #synset_candidates = [x[3] for x in disambiguated_corpus]
+    #coomatrix = cooccurrencematrix(Corpus[TokenDocument(lemmatized_candidates)])
+    coomatrix = cooccurrencematrix(corpus)
+    doc_coomatrixterms = StringDocument(join(coomatrix.terms, " "))
+    prepare!(doc_coomatrixterms, strip_punctuation)
+    cleaned_coomatrixterms = split(text(doc_coomatrixterms))
+    graphmatrix = build_weighted_graph(coomatrix)
+    disambiguated_candidates = disambiguation(join(cleaned_coomatrixterms, " "))
+    #lemmatized_candidates = [x[2] for x in disambiguated_candidates]
+    synset_candidates = [x[3] for x in disambiguated_candidates]
+    graphmatrix_edges = collect(edges(graphmatrix))
+    graphmatrix_src = map(src, graphmatrix_edges)
+    graphmatrix_dst = map(dst, graphmatrix_edges)
+
+    for i in eachindex(graphmatrix_edges)
+        if isnothing(synset_candidates[graphmatrix_src[i]]) || isnothing(synset_candidates[graphmatrix_dst[i]])
+            continue
+        else
+            set_prop!(graphmatrix, graphmatrix_src[i], graphmatrix_dst[i], :weight, pywsd.similarity.similarity_by_path(synset_candidates[graphmatrix_src[i]], synset_candidates[graphmatrix_dst[i]], option="path"))
+        end
+    end
+    score = pagerank(graphmatrix, 0.85, 30, 1.0e-4)::Vector{Float64} # this may cause an error on non-64 bit systems
+    sort(collect(zip(score, cleaned_coomatrixterms)); rev = true)[1:ceil(Integer, 1/3 * length(cleaned_coomatrixterms))]
 end
 
 function postprocessing(data::String)
